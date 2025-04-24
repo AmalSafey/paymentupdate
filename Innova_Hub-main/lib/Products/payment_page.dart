@@ -1,0 +1,421 @@
+import 'dart:convert';
+
+import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:innovahub_app/home/cart_Tap.dart';
+import 'package:innovahub_app/home/user_home_screen.dart';
+import 'package:innovahub_app/payment/view/payment_view.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:innovahub_app/Custom_Widgets/shipping%20_address_container.dart';
+import 'package:innovahub_app/Products/checkout_address.dart';
+import 'package:innovahub_app/core/Api/Api_delivery_method.dart';
+import 'package:innovahub_app/core/Constants/Colors_Constant.dart';
+
+class PaymentPage extends StatefulWidget {
+  const PaymentPage({super.key});
+
+  static const String routeName = 'payment_page'; // route name:
+
+  @override
+  State<PaymentPage> createState() => _BuyPageState();
+}
+
+class _BuyPageState extends State<PaymentPage> {
+  int select = 0;
+  int quantity = 1;
+  List<DeliveryMethod> deliveryMethods = [];
+  DeliveryMethod? selectedMethod;
+  bool isLoading = true;
+  String? userComment = "No comment provided";
+
+  @override
+  void initState() {
+    super.initState();
+    fetchDeliveryMethods();
+    fetchComment();
+  }
+
+  Future<void> fetchComment() async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    setState(() {
+      userComment = prefs.getString("userComment") ?? "No comment provided";
+    });
+  }
+
+  Future<void> fetchDeliveryMethods() async {
+    try {
+      List<DeliveryMethod> methods =
+          await DeliveryService.fetchDeliveryMethods();
+      setState(() {
+        deliveryMethods = methods;
+        if (deliveryMethods.isNotEmpty) {
+          selectedMethod = deliveryMethods.first;
+        }
+        isLoading = false;
+      });
+    } catch (e) {
+      print('Error fetching delivery methods: $e');
+      setState(() {
+        isLoading = false;
+      });
+    }
+  }
+
+  Future<void> confirmOrder({
+    required int deliveryMethodId,
+    required String userComment,
+  }) async {
+    const String apiUrl =
+        "https://innova-hub.premiumasp.net/api/order/Confirm-Order";
+
+    try {
+      SharedPreferences prefs = await SharedPreferences.getInstance();
+      String? token = prefs.getString("token");
+
+      if (token == null) {
+        print("Error: No token found. Please log in again.");
+        return;
+      }
+
+      final response = await http.post(
+        Uri.parse(apiUrl),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode({
+          "DeliveryMethodId": deliveryMethodId,
+          "UserComment": userComment,
+        }),
+      );
+
+      print("Status Code: ${response.statusCode}");
+      print("Response Body: ${response.body}");
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final responseData = jsonDecode(response.body);
+        print("Order confirmed successfully!");
+
+        if (responseData.containsKey("RedirectToCheckoutUrl")) {
+          await launchCheckoutUrl(responseData["RedirectToCheckoutUrl"]);
+        }
+      } else {
+        var responseBody = jsonDecode(response.body);
+        print(
+            "Failed to confirm order: ${responseBody['message'] ?? 'Unknown error'}");
+      }
+    } catch (e) {
+      print("Error confirming order: $e");
+    }
+  }
+
+  Future<void> launchCheckoutUrl(String url) async {
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) {
+        return PaymetExcuteWebView(url: url);
+      }),
+    );
+
+    if (result == "success") {
+      // Navigate to Home after payment success
+      Navigator.pushNamedAndRemoveUntil(
+        context,
+        UserHomeScreen.routeName,
+        (route) => false,
+      );
+    } else if (result == "failed") {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Payment failed, please try again.")),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Constant.white3Color,
+      appBar: AppBar(
+        //shadowColor: Constant.whiteColor,
+        backgroundColor: Constant.whiteColor,
+        elevation: 0,
+        title: const Text(
+          'Innova',
+          style: TextStyle(
+              color: Constant.blackColorDark,
+              fontSize: 24,
+              fontWeight: FontWeight.bold),
+        ),
+        centerTitle: true,
+        actions: const [
+          Padding(
+            padding: EdgeInsets.only(right: 16),
+            child: CircleAvatar(
+              radius: 24,
+              backgroundImage: AssetImage('assets/images/image-13.png'),
+            ),
+          ),
+        ],
+      ),
+      body: SingleChildScrollView(
+        child: Column(
+          children: [
+            InkWell(
+                onTap: () {
+                  Navigator.pushNamed(context, CheckoutAddress.routeName);
+                },
+                child: ShippingAddressWidget()),
+            const SizedBox(height: 15),
+            Padding(
+                padding: EdgeInsets.symmetric(horizontal: 16),
+                child: ListWidget()),
+            Container(
+              height: 350,
+              width: double.infinity,
+              margin:
+                  const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+              padding: const EdgeInsets.all(8.0),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(15),
+                boxShadow: [
+                  BoxShadow(color: Colors.grey.shade300, blurRadius: 4)
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.only(left: 10, top: 10),
+                    child: Text(
+                      'Delivery Methods',
+                      style: TextStyle(
+                          color: Constant.blackColorDark,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w500),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  isLoading
+                      ? const CircularProgressIndicator()
+                      : deliveryMethods.isNotEmpty
+                          ? Column(
+                              children: deliveryMethods.map((method) {
+                                return RadioListTile<DeliveryMethod>(
+                                  title: Text(
+                                      "${method.shortName} - \$${method.cost}"),
+                                  subtitle: Text(method.description),
+                                  value: method,
+                                  groupValue: selectedMethod,
+                                  onChanged: (value) {
+                                    setState(() {
+                                      selectedMethod = value;
+                                    });
+                                  },
+                                );
+                              }).toList(),
+                            )
+                          : const Text("No delivery methods available."),
+                ],
+              ),
+            ),
+            const SizedBox(
+              height: 15,
+            ),
+            Container(
+              height: 230,
+              width: double.infinity,
+              margin: const EdgeInsets.symmetric(horizontal: 16),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Constant.whiteColor,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Order Sammery',
+                      style: TextStyle(
+                          color: Constant.blackColorDark,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w500),
+                    ),
+                    const SizedBox(
+                      height: 10,
+                    ),
+                    Container(
+                      height: 140,
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Constant.whiteColor,
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: Constant.greyColor4),
+                      ),
+                      child: const Text(
+                        "Add your comment...",
+                        style: TextStyle(
+                          fontWeight: FontWeight.w500,
+                          color: Constant.greyColor4,
+                          fontSize: 15,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(
+              height: 20,
+            ),
+            Container(
+                height: 180,
+                width: double.infinity,
+                margin: const EdgeInsets.symmetric(horizontal: 16),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Constant.whiteColor,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Padding(
+                    padding: const EdgeInsets.all(14),
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Text(
+                                'Subtotal',
+                                style: TextStyle(
+                                    color: Colors.grey,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w500),
+                              ),
+                              SizedBox(
+                                width: 200,
+                              ),
+                              Text(
+                                "\$${CartController.calculateTotalCartPrice().toStringAsFixed(2)}",
+                                style: const TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.grey),
+                              ),
+                            ],
+                          ),
+                          Row(
+                            children: [
+                              const Text(
+                                'Shipping',
+                                style: TextStyle(
+                                    color: Colors.grey,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w500),
+                              ),
+                              SizedBox(
+                                width: 200,
+                              ),
+                              Text(
+                                "\$15.00",
+                                style: const TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.grey),
+                              ),
+                            ],
+                          ),
+                          Row(
+                            children: [
+                              const Text(
+                                'Tax',
+                                style: TextStyle(
+                                    color: Colors.grey,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w500),
+                              ),
+                              SizedBox(
+                                width: 240,
+                              ),
+                              Text(
+                                "\$2.00",
+                                style: const TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.grey),
+                              ),
+                            ],
+                          ),
+                          const Divider(
+                            color: Constant.greyColor2,
+                            thickness: 1.5,
+                          ),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: [
+                              Text(
+                                "\$${((CartController.calculateTotalCartPrice() + 15) * 1.02).toStringAsFixed(2)}",
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.grey,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ]))),
+            SizedBox(
+              height: 30,
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                if (selectedMethod == null) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                        content: Text("Please select a delivery method!")),
+                  );
+                  return;
+                }
+
+                await confirmOrder(
+                  deliveryMethodId: selectedMethod!.id,
+                  userComment: userComment!,
+                );
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Constant.mainColor,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(15)),
+                minimumSize: const Size(220, 50),
+              ),
+              child: const Text('Buy Now',
+                  style: TextStyle(fontSize: 18, color: Constant.whiteColor)),
+            ),
+            const SizedBox(
+              height: 20,
+            ),
+
+            /* const Spacer(),
+            Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: ElevatedButton(
+                onPressed: () {},
+        
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Constant.mainColor,
+                  shape: RoundedRectangleBorder(
+                   borderRadius: BorderRadius.circular(15)),
+                   minimumSize: const Size(220, 50),
+                ),
+                child: const Text('Buy Now ',
+                style: TextStyle(fontSize: 18, color: Constant.whiteColor)),
+              ),
+            ),*/
+          ],
+        ),
+      ),
+    );
+  }
+}
